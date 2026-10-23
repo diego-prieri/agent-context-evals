@@ -1,0 +1,16 @@
+{
+  "repo": "../my-next-app",
+  "baseRef": "main",
+  "tasksDir": "tasks",
+  "variants": [
+    { "name": "baseline", "context": "" },
+    { "name": "repo-manifest", "contextFile": "contexts/MANIFEST.example.md" }
+  ],
+  "agentCommand": "claude -p {prompt} --output-format json --permission-mode acceptEdits --disallowedTools Bash",
+  "verify": {
+    "typecheck": "npx tsc --noEmit --pretty false"
+  },
+  "linkNodeModules": true,
+  "timeoutSec": 600,
+  "repetitions": 3
+}
