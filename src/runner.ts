@@ -22,6 +22,8 @@ export interface RunResult {
   newTsErrors: number;
   newTsErrorSamples: string[];
   testPass: boolean | null;
+  /** Whether the same test command passed on the untouched base commit. */
+  testBaselinePass: boolean | null;
   agentExitCode: number | null;
   agentTimedOut: boolean;
   durationMs: number;
@@ -70,6 +72,8 @@ async function prepare(config: EvalConfig, dir: string): Promise<void> {
   }
 }
 
+const testCommand = (config: EvalConfig, task: Task) => task.test ?? config.verify.test;
+
 async function typecheck(config: EvalConfig, dir: string): Promise<TsError[]> {
   const r = await sh(config.verify.typecheck, { cwd: dir, timeoutMs: config.timeoutSec * 1000 });
   return parseTscOutput(r.stdout + "\n" + r.stderr);
@@ -87,20 +91,32 @@ export async function runEvals(config: EvalConfig, tasks: Task[], opts: RunOptio
   const contexts = new Map(config.variants.map((v) => [v.name, variantContext(v)]));
 
   // The baseline error set is computed once per base commit; only new errors count against the agent.
+  // Each test command is also run once there, so a suite that is already red is caught before any agent runs.
   const baseDir = await wt.create(baseCommit, "baseline");
   let baseline: TsError[];
+  const testBaselines = new Map<string, boolean>();
   try {
     await prepare(config, baseDir);
     baseline = await typecheck(config, baseDir);
+    for (const cmd of new Set(tasks.map((t) => testCommand(config, t)))) {
+      if (!cmd) continue;
+      const t = await sh(cmd, { cwd: baseDir, timeoutMs: config.timeoutSec * 1000 });
+      testBaselines.set(cmd, t.code === 0);
+    }
   } finally {
     await wt.remove(baseDir);
   }
+  // A task's own test may fail on the base commit (it tests what the task asks for), but the default
+  // suite applies to every task: if it is already red, every run would fail regardless of the agent.
+  const suite = config.verify.test;
+  if (suite && testBaselines.get(suite) === false)
+    throw new Error(`verify.test fails on the base commit ${baseCommit.slice(0, 12)}; fix it or pick a clean baseRef: ${suite}`);
 
   if (opts.outFile) mkdirSync(dirname(opts.outFile), { recursive: true });
   const matrix = buildMatrix(config, tasks);
   const results: RunResult[] = [];
   for (const [i, spec] of matrix.entries()) {
-    const result = await runOne(config, wt, spec, baseCommit, baseline, contexts.get(spec.variant) ?? "");
+    const result = await runOne(config, wt, spec, baseCommit, baseline, testBaselines, contexts.get(spec.variant) ?? "");
     results.push(result);
     if (opts.outFile) appendFileSync(opts.outFile, JSON.stringify(result) + "\n");
     opts.onResult?.(result, i, matrix.length);
@@ -114,6 +130,7 @@ async function runOne(
   spec: RunSpec,
   baseCommit: string,
   baseline: TsError[],
+  testBaselines: Map<string, boolean>,
   context: string,
 ): Promise<RunResult> {
   const start = Date.now();
@@ -128,6 +145,7 @@ async function runOne(
     newTsErrors: 0,
     newTsErrorSamples: [],
     testPass: null,
+    testBaselinePass: null,
     agentExitCode: null,
     agentTimedOut: false,
     durationMs: 0,
@@ -158,10 +176,11 @@ async function runOne(
     result.newTsErrorSamples = fresh.slice(0, 5).map((e) => `${e.file}(${e.line},${e.col}): ${e.code} ${e.message}`);
     result.typecheckPass = fresh.length === 0;
 
-    const testCmd = spec.task.test ?? config.verify.test;
+    const testCmd = testCommand(config, spec.task);
     if (testCmd) {
       const t = await sh(testCmd, { cwd: dir, timeoutMs: config.timeoutSec * 1000 });
       result.testPass = t.code === 0;
+      result.testBaselinePass = testBaselines.get(testCmd) ?? null;
     }
     // A run where the agent changed nothing is not a success, even though it type-checks.
     result.pass = result.typecheckPass && result.testPass !== false && result.filesChanged > 0 && !agent.timedOut;

@@ -14,7 +14,7 @@ For every task × variant × repetition:
 2. Build the prompt: the variant's context, a `---` separator, then the task prompt.
 3. Run the agent **once**, non-interactively, with the worktree as its working directory.
 4. Run the typecheck and count errors that are not in the baseline. The baseline is computed once per base commit. Errors are compared by file, code and message, so an edit that shifts a pre-existing error down a few lines doesn't count against the agent.
-5. Run the test command, if the task or the config has one.
+5. Run the test command, if the task or the config has one. Each test command is also run once on the base commit (see [Test baseline](#test-baseline)).
 6. Record the result (pass/fail, new TS errors, duration, files changed, `git diff --stat`) and remove the worktree.
 
 A run **passes** when there are no new type errors, the test (if any) passed, the agent changed at least one file and did not time out.
@@ -55,6 +55,14 @@ A run **passes** when there are no new type errors, the test (if any) passed, th
 | `workDir` | Where worktrees are created. Default `.evals-work`. |
 
 The default command disables `Bash` on purpose. If the agent could run `tsc` itself, it would iterate until it type-checks and you'd be measuring its self-correction loop, not its first attempt.
+
+### Test baseline
+
+Before any agent runs, every distinct test command is run once on the untouched base commit, and each result records it as `testBaselinePass`:
+
+- If `verify.test` (the default suite, shared by every task without its own `test`) fails on the base commit, the run stops before calling the agent. A suite that is already red makes every attempt look like a failure.
+- A task's own `test` is allowed to fail there, because it usually tests what the task asks for. That is the expected case.
+- A test that already passes on the base commit doesn't check the task. The report counts those runs so you can tighten the test.
 
 ## Tasks
 

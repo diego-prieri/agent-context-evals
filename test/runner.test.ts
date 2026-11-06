@@ -76,6 +76,7 @@ test("runEvals with a fake agent counts only new TS errors and cleans up worktre
   assert.equal(base.newTsErrors, 1);
   assert.match(base.newTsErrorSamples[0], /src\/new\.ts.*TS2322/);
   assert.equal(base.testPass, true);
+  assert.equal(base.testBaselinePass, false);
   assert.equal(base.filesChanged, 1);
 
   assert.equal(good.variant, "good-context");
@@ -93,6 +94,7 @@ test("runEvals with a fake agent counts only new TS errors and cleans up worktre
   assert.match(report, /\| baseline \| 0\.0% \(0\/1\)/);
   assert.match(report, /\*\*good-context\*\*: \+100\.0%/);
   assert.match(report, /Small sample/);
+  assert.doesNotMatch(report, /already passes on the base commit/);
 
   assert.deepEqual(readdirSync(c.workDir), []);
   const wt = execFileSync("git", ["worktree", "list"], { cwd: repo, encoding: "utf8" }).trim().split("\n");
@@ -112,4 +114,22 @@ test("runEvals marks no-op and timed-out runs as failures", async () => {
   assert.equal(results[0].pass, false);
   assert.equal(results[1].agentTimedOut, true);
   assert.equal(results[1].pass, false);
+});
+
+const exitCode = (code: number) => `"${process.execPath}" -e "process.exit(${code})"`;
+
+test("runEvals refuses to run when the default test suite already fails on the base commit", async () => {
+  const repo = fixtureRepo();
+  const c = config(repo, { variants: [{ name: "only" }], verify: { typecheck: "true", test: exitCode(1) } });
+  await assert.rejects(runEvals(c, [{ id: "t", prompt: "x" }]), /verify\.test fails on the base commit/);
+  assert.deepEqual(readdirSync(c.workDir), []);
+});
+
+test("runEvals records the test baseline and flags tests that pass without the task", async () => {
+  const repo = fixtureRepo();
+  const c = config(repo, { variants: [{ name: "only" }], verify: { typecheck: "true", test: exitCode(0) } });
+  const results = await runEvals(c, [{ id: "suite", prompt: "x" }]);
+  assert.equal(results[0].testPass, true);
+  assert.equal(results[0].testBaselinePass, true);
+  assert.match(renderReport(results, ["only"]), /1 run\(s\) used a test that already passes on the base commit/);
 });

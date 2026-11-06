@@ -52,6 +52,12 @@ export function renderReport(results: RunResult[], variants: string[]): string {
       lines.push(`- **${o.variant}**: ${sign}${pct(d.diff)} [${pct(d.interval.low)}, ${pct(d.interval.high)}], ${verdict}`);
     }
   }
+  const vacuous = results.filter((r) => r.testBaselinePass === true).length;
+  if (vacuous)
+    lines.push(
+      "",
+      `_${vacuous} run(s) used a test that already passes on the base commit, so it does not check the task._`,
+    );
   const n = Math.min(...sums.map((s) => s.n));
   if (n < 30)
     lines.push("", `_Small sample (n=${n} per variant). Treat differences as directional, not as proof._`);
